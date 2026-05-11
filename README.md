@@ -1,5 +1,6 @@
 # Cycling Trip Planner Agent
 
+test
 AI cycling trip planner built around an explicit agent orchestration loop. Claude gathers preferences from the user, calls research tools (route, elevation, weather, accommodation), and commits a structured day-by-day plan via a dedicated submission tool. Exposed over Fastify as `POST /chat`.
 
 **Stack:** TypeScript (strict, NodeNext), Node 20+, Fastify 5, Zod 3, `@anthropic-ai/sdk`, Vitest. No framework abstractions on top of the agent loop — the orchestration is plain control flow.
