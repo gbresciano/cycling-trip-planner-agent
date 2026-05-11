@@ -99,48 +99,63 @@
         opacity: 0.5;
         cursor: not-allowed;
       }
-      #plan {
+      #plan,
+      .inline-plan {
         border: 1px solid rgba(127, 127, 127, 0.3);
         border-radius: 6px;
         padding: 0.5rem 0.75rem;
-        margin-bottom: 0.5rem;
         font-size: 0.85rem;
+      }
+      #plan {
+        margin-bottom: 0.5rem;
+      }
+      .inline-plan {
+        align-self: stretch;
       }
       #plan[hidden] {
         display: none;
       }
-      #plan summary {
+      #plan summary,
+      .inline-plan summary {
         cursor: pointer;
         font-weight: 600;
       }
-      #plan .summary-text {
+      #plan .summary-text,
+      .inline-plan .summary-text {
         margin: 0.5rem 0;
         line-height: 1.4;
       }
-      #plan table {
+      #plan table,
+      .inline-plan table {
         width: 100%;
         border-collapse: collapse;
         font-size: 0.8rem;
       }
       #plan th,
-      #plan td {
+      #plan td,
+      .inline-plan th,
+      .inline-plan td {
         text-align: left;
         padding: 0.35rem 0.5rem;
         border-bottom: 1px solid rgba(127, 127, 127, 0.2);
         vertical-align: top;
       }
-      #plan th {
+      #plan th,
+      .inline-plan th {
         font-weight: 600;
         opacity: 0.75;
       }
-      #plan tr:last-child td {
+      #plan tr:last-child td,
+      .inline-plan tr:last-child td {
         border-bottom: none;
       }
-      #plan .num {
+      #plan .num,
+      .inline-plan .num {
         text-align: right;
         font-variant-numeric: tabular-nums;
       }
-      #plan .weather {
+      #plan .weather,
+      .inline-plan .weather {
         white-space: nowrap;
       }
     </style>
@@ -217,6 +232,35 @@
         return point.latitude.toFixed(2) + "," + point.longitude.toFixed(2);
       }
 
+      function buildPlanRow(seg) {
+        const tr = document.createElement("tr");
+        const w = seg.weather || {};
+        const cells = [
+          { text: String(seg.day) },
+          { text: seg.date },
+          { text: placeName(seg.start) + " → " + placeName(seg.end) },
+          { text: Math.round(seg.route.distanceKm) + " km", cls: "num" },
+          {
+            text: Math.round(seg.route.elevation.totalGainM) + " m",
+            cls: "num",
+          },
+          {
+            text: weatherEmoji(w.conditions) + " " + Math.round(w.temperatureMinC) + "–" + Math.round(w.temperatureMaxC) + "°C",
+            title: w.conditions,
+            cls: "weather",
+          },
+          { text: seg.accommodation ? seg.accommodation.name : "—" },
+        ];
+        for (const cell of cells) {
+          const td = document.createElement("td");
+          td.textContent = cell.text;
+          if (cell.cls) td.className = cell.cls;
+          if (cell.title) td.title = cell.title;
+          tr.append(td);
+        }
+        return tr;
+      }
+
       function renderPlan(plan) {
         if (!plan) {
           planEl.hidden = true;
@@ -226,38 +270,53 @@
         }
         planEl.hidden = false;
         planSummaryEl.textContent = plan.summary || "";
-        const rows = (plan.segments || []).map(seg => {
-          const tr = document.createElement("tr");
-          const w = seg.weather || {};
-          const cells = [
-            { text: String(seg.day) },
-            { text: seg.date },
-            { text: placeName(seg.start) + " → " + placeName(seg.end) },
-            { text: Math.round(seg.route.distanceKm) + " km", cls: "num" },
-            {
-              text: Math.round(seg.route.elevation.totalGainM) + " m",
-              cls: "num",
-            },
-            {
-              text: weatherEmoji(w.conditions) + " " + Math.round(w.temperatureMinC) + "–" + Math.round(w.temperatureMaxC) + "°C",
-              title: w.conditions,
-              cls: "weather",
-            },
-            { text: seg.accommodation ? seg.accommodation.name : "—" },
-          ];
-          for (const cell of cells) {
-            const td = document.createElement("td");
-            td.textContent = cell.text;
-            if (cell.cls) td.className = cell.cls;
-            if (cell.title) td.title = cell.title;
-            tr.append(td);
-          }
-          return tr;
-        });
-        planBodyEl.replaceChildren(...rows);
+        planBodyEl.replaceChildren(
+          ...(plan.segments || []).map(buildPlanRow),
+        );
+      }
+
+      const PLAN_HEADERS = [
+        ["Day", ""],
+        ["Date", ""],
+        ["From → To", ""],
+        ["Dist", "num"],
+        ["Elev↑", "num"],
+        ["Weather", ""],
+        ["Stay", ""],
+      ];
+
+      function buildPlanWidget(plan) {
+        const wrapper = document.createElement("details");
+        wrapper.className = "inline-plan";
+        wrapper.open = true;
+        const summaryEl = document.createElement("summary");
+        summaryEl.textContent = "Itinerary";
+        wrapper.append(summaryEl);
+        if (plan.summary) {
+          const p = document.createElement("p");
+          p.className = "summary-text";
+          p.textContent = plan.summary;
+          wrapper.append(p);
+        }
+        const table = document.createElement("table");
+        const thead = document.createElement("thead");
+        const headRow = document.createElement("tr");
+        for (const [text, cls] of PLAN_HEADERS) {
+          const th = document.createElement("th");
+          th.textContent = text;
+          if (cls) th.className = cls;
+          headRow.append(th);
+        }
+        thead.append(headRow);
+        const tbody = document.createElement("tbody");
+        for (const seg of plan.segments || []) tbody.append(buildPlanRow(seg));
+        table.append(thead, tbody);
+        wrapper.append(table);
+        return wrapper;
       }
 
       let conversationId = null;
+      let lastPlanJson = null;
 
       function addMessage(role, text) {
         const el = document.createElement("div");
@@ -282,6 +341,7 @@
         setConvId(null);
         logEl.innerHTML = "";
         renderPlan(null);
+        lastPlanJson = null;
         inputEl.focus();
       });
 
@@ -316,7 +376,15 @@
           const data = await send(text);
           if (data.conversationId) setConvId(data.conversationId);
           addMessage("assistant", data.assistantMessage ?? "(no reply)");
-          if (data.plan) renderPlan(data.plan);
+          if (data.plan) {
+            const planJson = JSON.stringify(data.plan);
+            if (planJson !== lastPlanJson) {
+              logEl.append(buildPlanWidget(data.plan));
+              logEl.scrollTop = logEl.scrollHeight;
+              lastPlanJson = planJson;
+            }
+            renderPlan(data.plan);
+          }
         } catch (err) {
           addMessage("error", String(err.message || err));
         } finally {
