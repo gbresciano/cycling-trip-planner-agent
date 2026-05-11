@@ -8,11 +8,7 @@
 // is an agent-only concern.
 
 import { z } from "zod";
-import {
-  accommodationTypeSchema,
-  geoPointSchema,
-  isoDateSchema,
-} from "../tools/schemas.js";
+import { accommodationTypeSchema, geoPointSchema, isoDateSchema } from "../tools/schemas.js";
 
 const moneySchema = z.object({
   amount: z.number().positive(),
@@ -75,7 +71,7 @@ const dailySegmentSchema = z.object({
   notes: z.string().optional(),
 });
 
-const tripPreferencesSchema = z.object({
+export const tripPreferencesSchema = z.object({
   startLocation: geoPointSchema,
   endLocation: geoPointSchema.optional(),
   startDate: isoDateSchema,
@@ -90,12 +86,16 @@ const tripPreferencesSchema = z.object({
   notes: z.string().optional(),
 });
 
+// Partial variant used by `update_preferences`: the agent calls this
+// tool whenever it learns or changes a field mid-conversation, so every
+// field has to be individually omittable. `.strict()` rejects unknown
+// keys — a hallucinated field name should surface as a tool error the
+// agent can react to, not be silently dropped.
+export const tripPreferencesPartialSchema = tripPreferencesSchema.partial().strict();
+
 export const submitTripPlanInputSchema = z.object({
   preferences: tripPreferencesSchema,
-  summary: z
-    .string()
-    .min(20)
-    .describe("A 2-4 sentence overview of the trip for the user."),
+  summary: z.string().min(20).describe("A 2-4 sentence overview of the trip for the user."),
   segments: z.array(dailySegmentSchema).min(1),
 });
 
