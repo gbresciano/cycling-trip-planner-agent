@@ -12,6 +12,7 @@ export function buildServer(): FastifyInstance {
 
   app.get("/health", async () => ({ status: "ok" }));
 
+  // serve chat UI for trying out the agent
   app.get("/", async (_request, reply) => {
     reply.type("text/html");
     return chatHtml;

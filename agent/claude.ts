@@ -97,6 +97,8 @@ export function createClaudeClient(config: ClaudeClientConfig): ClaudeClient {
     async complete(params: ClaudeCompleteParams): Promise<ClaudeResponse> {
       const tools = params.tools?.map(toSdkTool);
 
+      console.log("+++ Claude messages", JSON.stringify(params.messages.map(toSdkMessage)));
+      console.log("+++ ---");
       const response = await sdk.messages.create({
         model: params.model ?? defaultModel,
         max_tokens: params.maxTokens ?? defaultMaxTokens,

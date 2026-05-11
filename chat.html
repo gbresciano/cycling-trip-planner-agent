@@ -99,6 +99,50 @@
         opacity: 0.5;
         cursor: not-allowed;
       }
+      #plan {
+        border: 1px solid rgba(127, 127, 127, 0.3);
+        border-radius: 6px;
+        padding: 0.5rem 0.75rem;
+        margin-bottom: 0.5rem;
+        font-size: 0.85rem;
+      }
+      #plan[hidden] {
+        display: none;
+      }
+      #plan summary {
+        cursor: pointer;
+        font-weight: 600;
+      }
+      #plan .summary-text {
+        margin: 0.5rem 0;
+        line-height: 1.4;
+      }
+      #plan table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.8rem;
+      }
+      #plan th,
+      #plan td {
+        text-align: left;
+        padding: 0.35rem 0.5rem;
+        border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+        vertical-align: top;
+      }
+      #plan th {
+        font-weight: 600;
+        opacity: 0.75;
+      }
+      #plan tr:last-child td {
+        border-bottom: none;
+      }
+      #plan .num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      #plan .weather {
+        white-space: nowrap;
+      }
     </style>
   </head>
   <body>
@@ -110,14 +154,27 @@
         <a href="#" id="reset">new conversation</a>
       </div>
     </header>
+    <details id="plan" hidden>
+      <summary>Current plan</summary>
+      <p class="summary-text"></p>
+      <table>
+        <thead>
+          <tr>
+            <th>Day</th>
+            <th>Date</th>
+            <th>From → To</th>
+            <th class="num">Dist</th>
+            <th class="num">Elev↑</th>
+            <th>Weather</th>
+            <th>Stay</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </details>
     <div id="log"></div>
     <form id="form">
-      <textarea
-        id="input"
-        rows="2"
-        placeholder="Ask about a cycling trip… (Enter to send, Shift+Enter for newline)"
-        autofocus
-      ></textarea>
+      <textarea id="input" rows="2" placeholder="Ask about a cycling trip… (Enter to send, Shift+Enter for newline)" autofocus></textarea>
       <button type="submit" id="send">Send</button>
     </form>
 
@@ -128,6 +185,77 @@
       const sendEl = document.getElementById("send");
       const convIdEl = document.getElementById("convId");
       const resetEl = document.getElementById("reset");
+      const planEl = document.getElementById("plan");
+      const planSummaryEl = planEl.querySelector(".summary-text");
+      const planBodyEl = planEl.querySelector("tbody");
+
+      // Match the agent's free-form `weather.conditions` string to an
+      // emoji. Ordering matters: "partly cloudy" must hit ⛅ before "cloud"
+      // would grab it, and "thunderstorm" must hit ⛈️ before "storm" or
+      // "rain" claim it.
+      const WEATHER_EMOJI = [
+        [/thunder|storm/, "⛈️"],
+        [/snow|sleet|blizzard/, "❄️"],
+        [/rain|drizzle|shower/, "🌧️"],
+        [/fog|mist|haze/, "🌫️"],
+        [/partly|partial|mostly/, "⛅"],
+        [/cloud|overcast/, "☁️"],
+        [/sun|clear|fair/, "☀️"],
+        [/wind/, "💨"],
+      ];
+      function weatherEmoji(conditions) {
+        const text = (conditions || "").toLowerCase();
+        for (const [re, emoji] of WEATHER_EMOJI) {
+          if (re.test(text)) return emoji;
+        }
+        return "🌡️";
+      }
+
+      function placeName(point) {
+        if (!point) return "?";
+        if (point.name) return point.name;
+        return point.latitude.toFixed(2) + "," + point.longitude.toFixed(2);
+      }
+
+      function renderPlan(plan) {
+        if (!plan) {
+          planEl.hidden = true;
+          planSummaryEl.textContent = "";
+          planBodyEl.replaceChildren();
+          return;
+        }
+        planEl.hidden = false;
+        planSummaryEl.textContent = plan.summary || "";
+        const rows = (plan.segments || []).map(seg => {
+          const tr = document.createElement("tr");
+          const w = seg.weather || {};
+          const cells = [
+            { text: String(seg.day) },
+            { text: seg.date },
+            { text: placeName(seg.start) + " → " + placeName(seg.end) },
+            { text: Math.round(seg.route.distanceKm) + " km", cls: "num" },
+            {
+              text: Math.round(seg.route.elevation.totalGainM) + " m",
+              cls: "num",
+            },
+            {
+              text: weatherEmoji(w.conditions) + " " + Math.round(w.temperatureMinC) + "–" + Math.round(w.temperatureMaxC) + "°C",
+              title: w.conditions,
+              cls: "weather",
+            },
+            { text: seg.accommodation ? seg.accommodation.name : "—" },
+          ];
+          for (const cell of cells) {
+            const td = document.createElement("td");
+            td.textContent = cell.text;
+            if (cell.cls) td.className = cell.cls;
+            if (cell.title) td.title = cell.title;
+            tr.append(td);
+          }
+          return tr;
+        });
+        planBodyEl.replaceChildren(...rows);
+      }
 
       let conversationId = null;
 
@@ -149,10 +277,11 @@
         convIdEl.textContent = id ? "conv " + id.slice(0, 8) : "no conversation yet";
       }
 
-      resetEl.addEventListener("click", (e) => {
+      resetEl.addEventListener("click", e => {
         e.preventDefault();
         setConvId(null);
         logEl.innerHTML = "";
+        renderPlan(null);
         inputEl.focus();
       });
 
@@ -174,7 +303,7 @@
         return data;
       }
 
-      formEl.addEventListener("submit", async (e) => {
+      formEl.addEventListener("submit", async e => {
         e.preventDefault();
         const text = inputEl.value.trim();
         if (!text) return;
@@ -187,6 +316,7 @@
           const data = await send(text);
           if (data.conversationId) setConvId(data.conversationId);
           addMessage("assistant", data.assistantMessage ?? "(no reply)");
+          if (data.plan) renderPlan(data.plan);
         } catch (err) {
           addMessage("error", String(err.message || err));
         } finally {
@@ -195,7 +325,7 @@
         }
       });
 
-      inputEl.addEventListener("keydown", (e) => {
+      inputEl.addEventListener("keydown", e => {
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           formEl.requestSubmit();
