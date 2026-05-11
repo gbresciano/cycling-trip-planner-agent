@@ -10,7 +10,7 @@ AI cycling trip planner built around an explicit agent orchestration loop. Claud
 
 ```bash
 npm install
-cp .env.example .env   # set ANTHROPIC_API_KEY
+cp .env.example .env   # set CLAUDE_API_KEY
 npm run dev
 ```
 
@@ -24,7 +24,7 @@ curl -X POST localhost:3000/chat \
 
 You can also go to on your browser `localhost:3000/` and use the UI to chat
 
-Without `ANTHROPIC_API_KEY` the server still boots (the healthcheck works) but `/chat` is not registered. Set `NODE_ENV=development` to include the `toolCalls` debug payload in chat responses.
+Without `CLAUDE_API_KEY` the server still boots (the healthcheck works) but `/chat` is not registered. Set `NODE_ENV=development` to include the `toolCalls` debug payload in chat responses.
 
 | Script              |                             |
 | ------------------- | --------------------------- |

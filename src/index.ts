@@ -18,8 +18,8 @@ async function main(): Promise<void> {
 
   // /chat is only registered when we have an API key. The /health route
   // still boots so liveness probes work even in a half-configured env.
-  if (env.ANTHROPIC_API_KEY) {
-    const claude = createClaudeClient({ apiKey: env.ANTHROPIC_API_KEY });
+  if (env.CLAUDE_API_KEY) {
+    const claude = createClaudeClient({ apiKey: env.CLAUDE_API_KEY });
     const registry = createDefaultRegistry();
     const orchestrator = createOrchestrator({ claude, registry });
     const store = new InMemoryConversationStore();
@@ -30,7 +30,7 @@ async function main(): Promise<void> {
       includeDebug: env.NODE_ENV === "development",
     });
   } else {
-    app.log.warn("ANTHROPIC_API_KEY not set; /chat route disabled");
+    app.log.warn("CLAUDE_API_KEY not set; /chat route disabled");
   }
 
   const shutdown = async (signal: string): Promise<void> => {
