@@ -70,7 +70,7 @@ loop up to maxIterations (default 12):
   append assistant response → state
   if response has no tool_use blocks:
     return                        # agent asked a clarification or wrote a recap
-  execute every tool_use → tool_result
+  execute every tool_use in parallel → tool_result
   append all tool_results in one user message
 ```
 
@@ -78,6 +78,7 @@ Decisions worth calling out:
 
 - **`stop_reason: end_turn` is the loop's exit signal**, not a separate "I'm done" flag. The agent uses the same code path for clarification questions and post-submission recaps.
 - **Tool results are batched into one user message per turn.** Anthropic's protocol requires it.
+- **Tool calls within a turn run in parallel** via `Promise.all`. When the agent batches independent research calls (route + weather + accommodation) in a single assistant message, they fire concurrently instead of serially — a meaningful latency win once tools hit real network APIs. Block order in the `tool_result` user message is preserved so state-mutating effects (plan/preference updates) apply in the order the agent emitted them.
 - **`submit_trip_plan` is a tool, not a special API.** The orchestrator special-cases its `name` to re-validate the input with zod and build the canonical `TripPlan` with recomputed totals — never trusting the agent's own arithmetic. Returns a synthetic success result so the agent can write its confirmation on the next iteration.
 - **Tool failures don't crash the turn.** Zod validation errors and runtime throws become `tool_result` blocks with `isError: true`. The agent typically retries with corrected input.
 - **`maxIterations` is a safety net** for a misbehaving prompt — not the expected termination condition.
@@ -160,5 +161,7 @@ Today the orchestrator implicitly invalidates by overwriting `state.plan` when t
 - **Persistent storage** — Postgres + a JSONB column for `ConversationState`, behind the existing `ConversationStore` interface.
 - **Per-user auth** and conversation isolation; surface `stop_reason: "refusal"` to the client with a useful message.
 - **Token budget enforcement** via Anthropic's `task_budget` (beta) to bound spend per agent run.
+- **History compaction** — once `state.messages` crosses a token threshold, summarize older turns (tool calls + results especially) into a single assistant note and keep recent turns verbatim. Preserves the cached prefix while bounding input cost on long conversations.
+- **External memory / notes tool** — a `remember` / `recall` tool the agent writes durable facts to ("user prefers gravel, avoids highways, dislikes hostels"). Targeted retrieval beats resending full history, and survives compaction.
 - **Consolidated zod schemas** — `tools/schemas.ts` and `agent/plan-schemas.ts` both define `GeoPoint`/`IsoDate`. One shared module.
 - **One opt-in smoke test** against the real Anthropic API to catch SDK regressions on upgrades; all 51 tests today use a fake client.

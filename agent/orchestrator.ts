@@ -109,10 +109,30 @@ async function runTurn(state: ConversationState, userInput: string, deps: Orches
   let plan: TripPlan | null = state.plan;
   let reply = "";
 
+  const turnStart = Date.now();
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalCacheReadTokens = 0;
+  let totalCacheCreationTokens = 0;
+  let iterationsCompleted = 0;
+
   // This for-loop *is* the agent loop. Each iteration is one Claude
   // request + one batch of tool executions. The cap is a safety net,
   // not the expected termination condition (`end_turn` is).
   for (let i = 0; i < opts.maxIterations; i++) {
+    /// +++
+    const lastMessageContent = working.messages[working.messages.length - 1]?.content[0];
+    const claudeRequestStart = new Date().getTime();
+    console.log(
+      "🤖 Calling Claude",
+      typeof lastMessageContent === "string"
+        ? lastMessageContent
+        : lastMessageContent?.type === "text"
+          ? `Message: "${lastMessageContent.text}"`
+          : lastMessageContent?.type,
+    );
+    console.log("⏳ Waiting for Claude...");
+
     // We send the entire message history (including prior tool_use and
     // tool_result blocks) on every turn. That's what gives the agent
     // memory of what it has already researched within this conversation.
@@ -124,6 +144,15 @@ async function runTurn(state: ConversationState, userInput: string, deps: Orches
       messages: toClaudeMessages(working.messages),
       tools: deps.registry.list(),
     });
+    // +++
+    const claudeRequestFinish = new Date().getTime();
+    console.log("📩 Claude responded", `${Math.floor((claudeRequestFinish - claudeRequestStart) / 100) / 10}s`);
+
+    iterationsCompleted = i + 1;
+    totalInputTokens += response.usage.inputTokens;
+    totalOutputTokens += response.usage.outputTokens;
+    totalCacheReadTokens += response.usage.cacheReadInputTokens;
+    totalCacheCreationTokens += response.usage.cacheCreationInputTokens;
 
     const assistantContent = assistantBlocksToContent(response.content);
     working = appendMessage(working, makeMessage("assistant", assistantContent, opts.now()), { now: opts.now });
@@ -143,6 +172,16 @@ async function runTurn(state: ConversationState, userInput: string, deps: Orches
     // after submitting the plan (plan set → ready). Both paths look
     // the same to the loop: no more tools to run, hand control back.
     if (toolUses.length === 0) {
+      console.log("✅ Status:", plan ? "ready" : "needs_clarification");
+      logTurnSummary({
+        iterations: iterationsCompleted,
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        cacheReadTokens: totalCacheReadTokens,
+        cacheCreationTokens: totalCacheCreationTokens,
+        elapsedMs: Date.now() - turnStart,
+      });
+
       working = {
         ...working,
         status: plan ? "ready" : "needs_clarification",
@@ -155,10 +194,20 @@ async function runTurn(state: ConversationState, userInput: string, deps: Orches
     // the tool_uses in one assistant turn arrive together in a single
     // subsequent user message. We accumulate them, then append once
     // below — never one user message per tool.
-    const toolResults: ConversationContent[] = [];
+    //
+    // Tools execute in parallel: when the agent batches multiple calls
+    // in a single assistant turn (e.g. route + weather + accommodation),
+    // they fire concurrently rather than sequentially. Order of the
+    // resulting `tool_result` blocks is preserved (Promise.all maintains
+    // input order) so state-mutating effects below run in the same
+    // order the agent emitted them.
     for (const use of toolUses) {
-      const result = await executeToolCall(use, deps.registry);
+      console.log(`🛠️ Using Tool ${use.name}`, JSON.stringify(use.input).substring(0, 100));
+    }
+    const results = await Promise.all(toolUses.map(use => executeToolCall(use, deps.registry)));
 
+    const toolResults: ConversationContent[] = [];
+    for (const result of results) {
       toolResults.push(result.content);
       if (result.plan) {
         plan = result.plan;
@@ -189,11 +238,44 @@ async function runTurn(state: ConversationState, userInput: string, deps: Orches
     });
   }
 
+  logTurnSummary({
+    iterations: iterationsCompleted,
+    inputTokens: totalInputTokens,
+    outputTokens: totalOutputTokens,
+    cacheReadTokens: totalCacheReadTokens,
+    cacheCreationTokens: totalCacheCreationTokens,
+    elapsedMs: Date.now() - turnStart,
+    bailedOnMaxIterations: true,
+  });
+
   return {
     state: { ...working, status: "error", updatedAt: opts.now().toISOString() },
     reply: reply || "Reached the maximum number of agent iterations.",
     plan,
   };
+}
+
+interface TurnSummary {
+  iterations: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  elapsedMs: number;
+  bailedOnMaxIterations?: boolean;
+}
+
+function logTurnSummary(s: TurnSummary): void {
+  // Cache hit rate is over total prompt tokens: uncached input +
+  // cache writes + cache reads. `inputTokens` from the SDK already
+  // excludes cached content, so they sum without double-counting.
+  const totalPromptTokens = s.inputTokens + s.cacheReadTokens + s.cacheCreationTokens;
+  const cacheHitPct = totalPromptTokens > 0 ? Math.round((s.cacheReadTokens / totalPromptTokens) * 100) : 0;
+  const seconds = (s.elapsedMs / 1000).toFixed(1);
+  const tag = s.bailedOnMaxIterations ? "⛔ Turn aborted" : "📊 Turn done";
+  console.log(
+    `${tag}: ${s.iterations} iter, ${totalPromptTokens} in (${cacheHitPct}% cached) / ${s.outputTokens} out, ${seconds}s`,
+  );
 }
 
 interface ToolCallResult {
