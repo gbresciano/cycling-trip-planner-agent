@@ -98,10 +98,36 @@
         background: rgba(80, 130, 255, 0.2);
         color: inherit;
         cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
       }
       button:disabled {
         opacity: 0.5;
         cursor: not-allowed;
+      }
+      button .loader {
+        visibility: hidden;
+      }
+      button:disabled .loader {
+        visibility: visible;
+        width: 24px;
+        height: 24px;
+        border: 3px solid #000;
+        border-bottom-color: transparent;
+        border-radius: 50%;
+        display: inline-block;
+        box-sizing: border-box;
+        animation: rotation 1s linear infinite;
+      }
+
+      @keyframes rotation {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
       }
       #plan,
       .inline-plan {
@@ -124,8 +150,8 @@
         cursor: pointer;
         font-weight: 600;
       }
-      #plan .summary-text,
-      .inline-plan .summary-text {
+      #plan table,
+      .inline-plan table {
         margin: 0.5rem 0;
         line-height: 1.4;
       }
@@ -173,24 +199,6 @@
         <a href="#" id="reset">new conversation</a>
       </div>
     </header>
-    <details id="plan" hidden>
-      <summary>Current plan</summary>
-      <p class="summary-text"></p>
-      <table>
-        <thead>
-          <tr>
-            <th>Day</th>
-            <th>Date</th>
-            <th>From → To</th>
-            <th class="num">Dist</th>
-            <th class="num">Elev↑</th>
-            <th>Weather</th>
-            <th>Stay</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </details>
     <div id="log"></div>
     <form id="form">
       <textarea id="input" rows="2" placeholder="Ask about a cycling trip… (Enter to send, Shift+Enter for newline)" autofocus></textarea>
@@ -204,9 +212,6 @@
       const sendEl = document.getElementById("send");
       const convIdEl = document.getElementById("convId");
       const resetEl = document.getElementById("reset");
-      const planEl = document.getElementById("plan");
-      const planSummaryEl = planEl.querySelector(".summary-text");
-      const planBodyEl = planEl.querySelector("tbody");
 
       // Match the agent's free-form `weather.conditions` string to an
       // emoji. Ordering matters: "partly cloudy" must hit ⛅ before "cloud"
@@ -265,18 +270,6 @@
         return tr;
       }
 
-      function renderPlan(plan) {
-        if (!plan) {
-          planEl.hidden = true;
-          planSummaryEl.textContent = "";
-          planBodyEl.replaceChildren();
-          return;
-        }
-        planEl.hidden = false;
-        planSummaryEl.textContent = plan.summary || "";
-        planBodyEl.replaceChildren(...(plan.segments || []).map(buildPlanRow));
-      }
-
       const PLAN_HEADERS = [
         ["Day", ""],
         ["Date", ""],
@@ -294,12 +287,6 @@
         const summaryEl = document.createElement("summary");
         summaryEl.textContent = "Itinerary";
         wrapper.append(summaryEl);
-        if (plan.summary) {
-          const p = document.createElement("p");
-          p.className = "summary-text";
-          p.textContent = plan.summary;
-          wrapper.append(p);
-        }
         const table = document.createElement("table");
         const thead = document.createElement("thead");
         const headRow = document.createElement("tr");
@@ -342,7 +329,6 @@
         e.preventDefault();
         setConvId(null);
         logEl.innerHTML = "";
-        renderPlan(null);
         lastPlanJson = null;
         inputEl.focus();
       });
@@ -369,9 +355,14 @@
         e.preventDefault();
         const text = inputEl.value.trim();
         if (!text) return;
+        if (sendEl.disabled) return;
 
         inputEl.value = "";
+        sendEl.textContent = "";
         sendEl.disabled = true;
+        const loaderEl = document.createElement("span");
+        loaderEl.classList = "loader";
+        sendEl.append(loaderEl);
         addMessage("user", text);
 
         try {
@@ -385,11 +376,11 @@
               logEl.scrollTop = logEl.scrollHeight;
               lastPlanJson = planJson;
             }
-            renderPlan(data.plan);
           }
         } catch (err) {
           addMessage("error", String(err.message || err));
         } finally {
+          sendEl.textContent = "Send";
           sendEl.disabled = false;
           inputEl.focus();
         }

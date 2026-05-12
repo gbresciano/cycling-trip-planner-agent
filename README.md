@@ -60,12 +60,12 @@ tests/         vitest
                           │  api/chat.ts         │
                           └──────────┬───────────┘
                                      ▼
-                          ┌──────────────────────┐        ┌───────────────────────────┐
+                          ┌──────────────────────┐        ┌────────────────────────────┐
                           │  ChatService         │◄──────►│  InMemoryConversationStore │
                           │  src/chat-service.ts │ get /  │  (ConversationState:       │
                           └──────────┬───────────┘ update │   messages, preferences,   │
                                      │                    │   plan, status)            │
-                                     ▼                    └───────────────────────────┘
+                                     ▼                    └────────────────────────────┘
                           ┌──────────────────────┐
                           │  Orchestrator        │  append user message → state
                           │  agent/orchestrator  │
@@ -84,12 +84,13 @@ tests/         vitest
    │              append assistant message → state                                                  │
    │                            │                                                                   │
    │                            ▼                                                                   │
-   │                  ╱╲  any tool_use blocks?                                                      │
-   │                 ╱  ╲ ─── no (end_turn) ────────────────────────► EXIT LOOP                     │
-   │                 ╲  ╱                                                                           │
-   │                  ╲╱                                                                            │
-   │                   │ yes                                                                        │
-   │                   ▼                                                                            │
+   │                    any tool_use blocks?                                                        │
+   │                            ╱╲                                                                  │
+   │                           ╱  ╲ ─── no (end_turn) ──────► EXIT LOOP                             │
+   │                           ╲  ╱                                                                 │
+   │                            ╲╱                                                                  │
+   │                             │ yes                                                              │
+   │                             ▼                                                                  │
    │     ┌──────────────────────────────────────────────────────────────────────────────────┐       │
    │     │  Promise.all( tool_uses.map(execute) )    ← in parallel, order preserved         │       │
    │     │                                                                                  │       │
