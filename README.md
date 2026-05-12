@@ -46,6 +46,84 @@ tests/         vitest
 
 ---
 
+## Workflow
+
+```
+                          ┌──────────────────────┐
+                          │  Client (browser /   │
+                          │  curl)               │
+                          └──────────┬───────────┘
+                                     │  POST /chat { message }
+                                     ▼
+                          ┌──────────────────────┐
+                          │  Fastify route       │
+                          │  api/chat.ts         │
+                          └──────────┬───────────┘
+                                     ▼
+                          ┌──────────────────────┐        ┌───────────────────────────┐
+                          │  ChatService         │◄──────►│  InMemoryConversationStore │
+                          │  src/chat-service.ts │ get /  │  (ConversationState:       │
+                          └──────────┬───────────┘ update │   messages, preferences,   │
+                                     │                    │   plan, status)            │
+                                     ▼                    └───────────────────────────┘
+                          ┌──────────────────────┐
+                          │  Orchestrator        │  append user message → state
+                          │  agent/orchestrator  │
+                          └──────────┬───────────┘
+                                     ▼
+   ┌─────────────────────────  AGENT LOOP  (≤ maxIterations, default 12)  ──────────────────────────┐
+   │                                                                                                │
+   │     ┌──────────────────────────────────────────┐                                               │
+   │     │  claude.complete(                        │                                               │
+   │     │     system + tools  ← cached prefix      │                                               │
+   │     │     full message history ← new tail      │                                               │
+   │     │  )           agent/claude.ts             │                                               │
+   │     └──────────────────────┬───────────────────┘                                               │
+   │                            │ assistant: text + tool_use blocks                                 │
+   │                            ▼                                                                   │
+   │              append assistant message → state                                                  │
+   │                            │                                                                   │
+   │                            ▼                                                                   │
+   │                  ╱╲  any tool_use blocks?                                                      │
+   │                 ╱  ╲ ─── no (end_turn) ────────────────────────► EXIT LOOP                     │
+   │                 ╲  ╱                                                                           │
+   │                  ╲╱                                                                            │
+   │                   │ yes                                                                        │
+   │                   ▼                                                                            │
+   │     ┌──────────────────────────────────────────────────────────────────────────────────┐       │
+   │     │  Promise.all( tool_uses.map(execute) )    ← in parallel, order preserved         │       │
+   │     │                                                                                  │       │
+   │     │   ┌──── research tools ────┐  ┌── submit_trip_plan ──┐ ┌── update_preferences ─┐ │       │
+   │     │   │  get_route             │  │  zod-validates       │ │  applyPreferenceUpdate│ │       │
+   │     │   │  get_weather           │  │  recomputes totals   │ │  may wipe state.plan  │ │       │
+   │     │   │  get_elevation_profile │  │  → TripPlan          │ │  → re-plan next iter  │ │       │
+   │     │   │  find_accommodation    │  └──────────────────────┘ └───────────────────────┘ │       │
+   │     │   └────────────────────────┘                                                     │       │
+   │     │                                                                                  │       │
+   │     │   failures → tool_result { isError: true }   (agent typically retries)           │       │
+   │     └────────────────────────────────────┬─────────────────────────────────────────────┘       │
+   │                                          ▼                                                     │
+   │             append ALL tool_results in ONE user message → state                                │
+   │                                          │                                                     │
+   │                                          └──────────────► next iteration ──────────┐           │
+   │                                                                                    │           │
+   └────────────────────────────────────────────────────────────────────────────────────┼───────────┘
+                                                                                        │
+                                                  ┌─────────────────────────────────────┘
+                                                  ▼
+                                     status: ready (plan set) │ needs_clarification (no plan)
+                                                  │
+                                                  ▼
+                                     persist ConversationState → store
+                                                  │
+                                                  ▼
+                                     return { state, reply, plan } ──► Client
+```
+
+`stop_reason: end_turn` (no `tool_use` blocks) is the loop's exit signal — the same code path handles clarification questions and post-submission recaps. `submit_trip_plan` and `update_preferences` are ordinary tools the orchestrator inspects by name to pull structured signals (the validated plan, the preference patch) out of the result.
+
+---
+
 ## Architecture decisions
 
 - **Explicit orchestration loop.** No LangChain, no agent framework. A single `for` loop in `agent/orchestrator.ts` reads as procedural code; every branch is visible.
