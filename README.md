@@ -30,13 +30,13 @@ Without `CLAUDE_API_KEY` the server still boots (the healthcheck works) but `/ch
 | ------------------- | --------------------------- |
 | `npm run dev`       | tsx watch on `src/index.ts` |
 | `npm run build`     | tsc to `dist/`              |
-| `npm test`          | vitest run (51 tests)       |
+| `npm test`          | vitest run (54 tests)       |
 | `npm run typecheck` | tsc --noEmit                |
 
 ## Layout
 
 ```
-agent/         orchestrator, Claude SDK boundary, submit_trip_plan tool, system prompt
+agent/         orchestrator, Claude SDK boundary, submit_trip_plan & update_preferences tools, system prompt
 api/           Fastify route(s)
 src/           env config, server, in-memory store, chat service
 src/domain/    TS-only domain (trip, conversation, preferences)
@@ -158,6 +158,7 @@ Decisions worth calling out:
 - **Tool results are batched into one user message per turn.** Anthropic's protocol requires it.
 - **Tool calls within a turn run in parallel** via `Promise.all`. When the agent batches independent research calls (route + weather + accommodation) in a single assistant message, they fire concurrently instead of serially — a meaningful latency win once tools hit real network APIs. Block order in the `tool_result` user message is preserved so state-mutating effects (plan/preference updates) apply in the order the agent emitted them.
 - **`submit_trip_plan` is a tool, not a special API.** The orchestrator special-cases its `name` to re-validate the input with zod and build the canonical `TripPlan` with recomputed totals — never trusting the agent's own arithmetic. Returns a synthetic success result so the agent can write its confirmation on the next iteration.
+- **`update_preferences` is the other special-cased tool.** Its result carries a partial `TripPreferences` patch that the orchestrator folds through `applyPreferenceUpdate`. If the patch changes a plan-invalidating field after a plan was already submitted, the existing plan is wiped on the spot and the agent sees `state.plan === null` on the next iteration — the only path by which an in-flight plan gets invalidated mid-conversation.
 - **Tool failures don't crash the turn.** Zod validation errors and runtime throws become `tool_result` blocks with `isError: true`. The agent typically retries with corrected input.
 - **`maxIterations` is a safety net** for a misbehaving prompt — not the expected termination condition.
 
@@ -182,7 +183,7 @@ A `defineTool()` identity-function helper lets TypeScript infer `TSchema` and `T
 
 The `ToolRegistry` stores tools heterogeneously and exposes them by name. Storage type-erases to `Tool` at one explicit `as unknown as Tool` seam; `register` stays generic so call-site types are preserved. `invoke(name, rawInput)` runs the zod schema before executing — the LLM's JSON is never trusted as-is.
 
-The four mock data tools (`get_route`, `find_accommodation`, `get_weather`, `get_elevation_profile`) and the agent's `submit_trip_plan` tool all share this contract. Adding a new tool is one file under `tools/` plus one line in `createDefaultRegistry()`. Tool schemas are converted to JSON Schema for the API via `zod-to-json-schema` inside `agent/claude.ts`.
+The four mock data tools (`get_route`, `find_accommodation`, `get_weather`, `get_elevation_profile`) and the agent's two control tools (`submit_trip_plan`, `update_preferences`) all share this contract. Adding a new tool is one file under `tools/` plus one line in `createDefaultRegistry()`. Tool schemas are converted to JSON Schema for the API via `zod-to-json-schema` inside `agent/claude.ts`.
 
 ---
 
@@ -216,7 +217,7 @@ State updates are immutable — every turn returns a new `ConversationState`. Th
 - **`preferencesInvalidatePlan(before, after)`** — true iff a _plan-relevant_ field actually changed value. Plan-relevant: `startLocation`, `endLocation`, `startDate`, `durationDays`, `minDailyKm`, `maxDailyKm`, `fitnessLevel`, `terrain`, `accommodationTypes`, `budgetPerDay`. Cosmetic fields (`notes`, `mustVisit`) don't invalidate.
 - **`applyPreferenceUpdate(state, updates, now?)`** — merges and, if (and only if) a plan exists and the change invalidates it, wipes the plan, flips status to `planning`, and bumps `updatedAt`.
 
-Today the orchestrator implicitly invalidates by overwriting `state.plan` when the agent calls `submit_trip_plan` again with revised data. The pure utility is ready to plug into an explicit `update_preferences` tool — a step where the agent updates preferences without immediately replanning — without changing the loop.
+The orchestrator wires this in two places. `submit_trip_plan` overwrites `state.plan` with the freshly built `TripPlan`, so re-submitting after a revision replaces the prior plan. `update_preferences` runs its patch through `applyPreferenceUpdate` directly — the agent can record a preference change (e.g. "actually let's start a day later") without re-submitting, and if that change touches a plan-invalidating field, the existing plan is cleared in the same iteration so the next loop trip re-plans against the new constraints.
 
 ---
 
@@ -235,7 +236,6 @@ Today the orchestrator implicitly invalidates by overwriting `state.plan` when t
 
 - **Streaming responses** end-to-end (Claude `messages.stream()` → orchestrator yields → SSE to client).
 - **Real tools** — Mapbox/OSRM for routes, Open-Meteo for weather, a real accommodation provider. The `Tool` interface doesn't change.
-- **Explicit `update_preferences` tool** that calls `applyPreferenceUpdate`, making partial replanning a first-class step instead of an implicit overwrite at submit time.
 - **Persistent storage** — Postgres + a JSONB column for `ConversationState`, behind the existing `ConversationStore` interface.
 - **Per-user auth** and conversation isolation; surface `stop_reason: "refusal"` to the client with a useful message.
 - **Token budget enforcement** via Anthropic's `task_budget` (beta) to bound spend per agent run.
